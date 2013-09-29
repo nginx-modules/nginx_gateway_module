@@ -151,10 +151,92 @@
  	cscfp = cmcf->servers.elts;
 
  	for (m = 0; ngx_modules[m]; ++m) {
- 		if ()
+ 		if ( ngx_modules[m]->type != NGX_GATEWAY_MODULE) {
+ 			continue;
+ 		}
+
+ 		module = ngx_modules[m];
+ 		mi = ngx_modules[m]->ctx_index;
+
+ 		cf->ctx = ctx;
+
+ 		if (module->init_main_conf) {
+ 			rv = module->init_main_conf(cf, ctx->main_conf[mi]);
+ 			if (rv != NGX_CONF_OK) {
+ 				*cf = pcf;
+ 				return rv;
+ 			}
+
+ 			for (s = 0; s < cmcf->servers.nelts; ++s) {
+
+ 				cf->ctx = cscfp[s]->ctx;
+
+ 				if (module->merge_srv_conf) {
+ 					rv = module->merge_srv_conf(cf, ctx->srv_conf[mi], cscfp[s]->ctx->srv_conf[mi]);
+ 					if (rv != NGX_CONF_OK) {
+ 						*cf = pcf;
+ 						return rv;
+ 					}
+ 				}
+
+ 				if (module->merge_biz_conf) {
+ 					rv = module->merge_biz_conf(cf, ctx->biz_conf[mi], cscfp[s]->ctx->biz_conf[mi]);
+ 					if (rv != NGX_CONF_OK) {
+ 						*cf = pcf;
+ 						return rv;
+ 					}
+ 				}
+
+ 				cscf = cscfp[s]->ctx->srv_conf[ngx_gateway_core_module.ctx_index];
+
+ 				rv = ngx_gateway_merge_business(cf, )
+ 			}
+ 		}
  	}
 
 
  }
 
+
+static char *
+ngx_gateway_merge_business(ngx_conf_t *cf, ngx_array_t *businesses, void **app_conf, 
+						ngx_gateway_module_t *module, ngx_uint_t ctx_index)
+{
+	char							*rv;
+	ngx_gateway_conf_ctx_t			*ctx, saved;
+	ngx_gateway_core_biz_conf_t		**cbcfp;
+	ngx_uint_t						n;
+	ngx_gateway_core_biz_conf_t		*cbcf;
+
+	if (NULL == businesses) {
+		return NGX_CONF_OK;
+	}
+
+	ctx = (ngx_gateway_core_biz_conf_t *)cf->ctx;
+	saved = *ctx;
+
+	cbcfp = businesses->elts;
+	for (n = 0; n < businesses->nelts; ++n, ++cbcfp) {
+
+		ctx->app_conf = (*cbcfp)->app_conf[ctx_index];  /* ????????*/
+
+		rv = module->merge_biz_conf(cf, app_conf[ctx_index], (*cbcfp)->app_conf[ctx_index]);
+		if (rv != NGX_CONF_OK) {
+			return rv;
+		}
+
+		cbcf = (*cbcfp)->app_conf[ngx_gateway_core_module.ctx_index];
+
+		rv = ngx_gateway_merge_business(cf, &cbcf->businesses, (*cbcfp)->app_conf, module, ctx_index);
+		if (rv != 	NGX_CONF_OK) {
+			return rv;
+		}
+
+	}
+
+	*ctx = saved;
+
+	return NGX_CONF_OK;
+
+}
 

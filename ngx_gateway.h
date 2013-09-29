@@ -150,6 +150,7 @@ typedef struct {
 typedef struct {
     ngx_array_t             businesses;     /* array of ngx_gateway_core_biz_conf_t */
     ngx_str_t               name;  
+    void                    **biz_conf;
 } ngx_gateway_core_biz_conf_t;
 
 typedef void (*ngx_gateway_init_session_pt)(ngx_gateway_session_t *s);
@@ -175,10 +176,10 @@ typedef struct {
     char                            *(*init_main_conf)(ngx_conf_t *cf, void *conf);
 
     void                            *(*create_srv_conf)(ngx_conf_t *cf);
-    char                            *(*init_srv_conf)(ngx_conf_t *cf, void *conf);
+    char                            *(*merge_srv_conf)(ngx_conf_t *cf, void *prev, void* conf);
 
     void                            *(*create_biz_conf)(ngx_conf_t *cf);
-    char                            *(*init_biz_conf)(ngx_conf_t *cf, void *conf);
+    char                            *(*merge_biz_conf)(ngx_conf_t *cf, void *prev, void *conf);
 } ngx_gateway_module_t;
 
 #define NGX_GATEWAY_MODULE          0x5E2D2165
