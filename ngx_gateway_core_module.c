@@ -120,7 +120,7 @@
  	},
 
  	{
- 		ngx_string("allow"),
+ 		ngx_string("deny"),
  		NGX_GATEWAY_MAIN_CONF|NGX_GATEWAY_SRV_CONF|NGX_CONF_TAKE1,
  		ngx_gateway_core_access_rule,
  		NGX_GATEWAY_SRV_CONF_OFFSET,

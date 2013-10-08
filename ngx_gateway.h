@@ -167,7 +167,7 @@ struct ngx_gateway_protocol_s {
     ngx_gateway_parse_protcol_pt    pasrse_protocol;
 
     ngx_str_t                       internal_server_error;
-} 
+};
 
 typedef struct {
     ngx_gateway_protocol_t          *protocol;

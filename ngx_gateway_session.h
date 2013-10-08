@@ -46,4 +46,6 @@
  	ngx_gateway_cleanup_t 		*next;
  };
 
+ void ngx_gateway_init_connection(ngx_connection_t *c);
+
  #endif
