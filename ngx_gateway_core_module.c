@@ -350,5 +350,222 @@
  static char *
  ngx_gateway_core_server(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
  {
- 	
+ 	char							*rv;
+ 	void							*mconf;
+ 	ngx_uint_t						m;
+ 	ngx_conf_t 						pcf;  
+ 	ngx_gateway_modult_t			*module;
+ 	ngx_gateway_conf_ctx_t			*ctx, *gateway_ctx;
+ 	ngx_gateway_core_srv_conf_t		*cscf, **cfcfp;
+ 	ngx_gateway_core_main_conf_t	*cmcf;
+
+ 	ctx = ngx_pcalloc(cf->pool, sizeof(ngx_gateway_conf_ctx_t));
+ 	if ( NULL == ctx ) {
+ 		return NGX_CONF_ERROR;
+ 	}
+
+ 	gateway_ctx = cf->ctx;
+ 	ctx->main_conf = gateway_ctx->main_conf;
+
+ 	ctx->srv_conf = ngx_pcalloc(cf->pool, sizeof(ngx_gateway_core_srv_conf_t));
+ 	if (NULL == ctx->srv_conf) {
+ 		return NGX_CONF_ERROR;
+ 	}
+
+ 	for (m = 0; ngx_modules[m]; ++m) {
+ 		if (ngx_modules[m]->type != NGX_GATEWAY_MODULE) {
+ 			continue;
+ 		}
+
+ 		module = ngx_modules[m];
+
+ 		if (module->create_srv_conf) {
+ 			mconf = module->create_srv_conf(cf);
+ 			if (NULL != mconf) {
+ 				return NGX_CONF_ERROR;
+ 			}
+
+ 			ctx->srv_conf[ngx_modules[m]->ctx_index] = mconf;
+
+ 		}
+
+ 		if (module->create_biz_conf) {
+ 			mconf = module->create_biz_conf(cf);
+ 			if (NULL == mconf) {
+ 				return NGX_CONF_ERROR;
+ 			}
+
+ 			ctx->biz[ngx_modules[m]->ctx_index] = mconf;
+ 		}
+ 	}
+
+ 	cscf = ctx->srv_conf[ngx_gateway_core_module.ctx_index];
+ 	cscf->ctx = ctx;
+
+ 	cmcf = ctx->main_conf[ngx_gateway_core_module.ctx_index];
+
+ 	cscfp = ngx_array_push(&cmcf->servers);
+ 	if (NULL == cscfp) {
+ 		return NGX_CONF_ERROR;
+ 	}
+
+ 	*cscfp = cscf;
+
+ 	pcf = *cf;
+ 	cf->ctx = ctx;
+ 	cf->cmd_type = NGX_GATEWAY_SRV_CONF;
+
+ 	rv = ngx_conf_parse(cf, NULL);
+
+ 	*cf = pcf;
+
+ 	return rv;
+ }
+
+ static char *
+ ngx_gateway_core_listen(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+ {
+ 	size_t							len, off;
+ 	in_port_t						port;
+ 	ngx_str_t						*value;
+ 	ngx_url_t						u;
+ 	ngx_uint_t						i, m;
+ 	struct sockaddr					*sa;
+ 	ngx_gateway_listen_t			*ls;
+ 	struct sockaddr_in				*sin;
+ 	ngx_gateway_core_main_conf_t	cmcf;
+#if (NGX_HAVE_INET6)
+ 	struct sockaddr_in6				*sin6;
+#endif
+
+ 	value = cf->args->elts;
+
+ 	ngx_memzero(&u, sizeof(ngx_url_t));
+ 	u.url = value[1];
+ 	u.listen = 1;
+
+ 	if (ngx_parse_url(cf->pool, &u) != NGX_OK ) {
+ 		if (u.err) {
+ 			ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "%s in \"%V\" of the \"listen\" directives",
+ 			u.err, &u.url );
+ 		}
+
+ 		return NGX_CONF_ERROR;
+ 	}
+
+ 	cmcf = ngx_gateway_conf_get_module_main_conf(cf, ngx_gateway_core_module);
+
+ 	ls = cmcf->listen.elts;
+
+ 	for (i = 0; i < cmcf->listen.nelts; ++i) {
+ 		sa = (struct sockaddr *) ls[i].sockaddr;
+
+ 		if (sa->sa_family != u.family) {
+ 			continue;
+ 		}
+
+ 		switch (sa->sa_family) {
+
+ #if (NGX_HAVE_INET6)
+ 		case AF_INET6:
+ 			off  = offsetof(struct sockaddr_in6, sin6_addr);
+ 			len = 16;
+ 			sin6 = (struct sockaddr_in6 *)sa;
+ 			port = sin6->sin6_port;
+ 			break;
+ #endif
+
+ 		default:
+ 			off = offsetof(struct sockaddr_in, sin_addr);
+ 			len = 4;
+ 			sin = (struct sockaddr_in *)sa;
+ 			port = sin->sin6_port;
+ 			break;
+ 		}
+
+ 		if (ngx_memcmp(ls[i].sockaddr + off, u.sockaddr + off, len) != 0) {
+ 			continue;
+ 		}
+
+ 		if (port != u.port) {
+ 			continue;
+ 		}
+
+ 		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "duplicate \"%V\" address and port pair", &u.url)
+ 		return NGX_CONF_ERROR;
+ 	}
+
+ 	ls = ngx_array_push(&cmcf->listen);
+ 	if (NULL == ls) {
+ 		return NGX_CONF_ERROR;
+ 	}
+
+ 	ngx_memzero(ls, sizeof(ngx_gateway_listen_t));
+
+ 	ngx_memcpy(ls, u.sockaddr, u.socklen);
+
+ 	ls->socklen = u.socklen;
+ 	ls.wildcard = u.wildcard;
+ 	ls->ctx = cf->ctx;
+
+ 	for (i = 2; i < cf->args->nelts; ++i) {
+
+ 		if (ngx_strcmp(value[i].data, "bind") == 0) {
+ 			ls->bind = 1;
+ 			continue;
+ 		}
+
+ 		if (ngx_strcmp(value[i].data, "default") == 0) {
+ 			ls->default_port = 1;
+ 		}
+
+ 		if (ngx_strncmp(value[i].data, "ipv6only=o", 10) == 0) {
+ #if (NGX_HAVE_INET6 && defined IPV6_V6ONLY)
+ 			struct sockaddr *sa;
+ 			u_char			buf[NGX_SOCKADDR_STRLEN];
+
+ 			sa = (struct sockaddr *)ls->sockaddr;
+
+ 			if (sa->sa_family == AF_INET6) {
+ 				if (ngx_strcmp(&value[i].data[10], "n") == 0 ) {
+ 					ls->ipv6only = 1;
+ 				} else if (ngx_strcmp(&value[i].data[10], "ff") == 0) {
+ 					ls->ipv6only = 2;
+ 				} else {
+ 					ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 
+ 						"invalid ipv6only flags \"%s\"", 
+ 						&value[i].data[9]);
+
+ 					return NGX_CONF_ERROR;
+ 				}
+
+ 				ls->bind = 1; /* ?????// */
+ 			}else {
+ #if defined(nginx_version) && nginx_version > 1005003
+ 				len = ngx_sock_ntop(sa, ls->socklen, buf, NGX_SOCKADDR_STRLEN, 1);
+ #else
+ 				len = ngx_sock_ntop(sa, buf, NGX_SOCKADDR_STRLEN, 1);
+ #endif
+
+ 				ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+ 					"ipv6only os not supported "
+ 					"on addr \"%*s\", ignored", len, buf);
+ 			}
+
+ 			continue;
+ #else
+ 			ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 
+ 				"bind ipv6only is not supported"
+ 				"on this platform");
+
+ 			return NGX_CONF_ERROR;
+ #endif
+ 		}
+
+ 		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+ 			"the invalid \"%V\" parameter", &value[i]);
+ 		return NGX_CONF_ERROR;
+ 	}
+
+ 	return NGX_CONF_OK;
  }

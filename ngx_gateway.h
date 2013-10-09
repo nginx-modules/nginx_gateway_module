@@ -29,6 +29,7 @@ typedef struct {
     /* server ctx */
     ngx_gateway_conf_ctx_t    *ctx;
 
+    unsigned                default_port:1;
     unsigned                bind:1;
     unsigned                wildcard:1;
 #if (NGX_HAVE_INET6 && defined IPV6_V6ONLY)
