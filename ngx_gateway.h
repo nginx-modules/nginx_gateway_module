@@ -93,6 +93,11 @@ typedef struct {
 #endif
 } ngx_gateway_conf_addr_t
 
+typedef struct {
+    in_addr_t               mask;
+    in_addr_t               addr;
+    ngx_uint_t              deny;
+} ngx_gatewy_access_rule_t;
 
 
 typedef struct {

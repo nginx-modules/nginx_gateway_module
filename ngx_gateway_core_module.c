@@ -425,11 +425,14 @@
  static char *
  ngx_gateway_core_listen(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
  {
+ 	ngx_gateway_core_srv_conf_t		*cscf = conf;
+
  	size_t							len, off;
  	in_port_t						port;
  	ngx_str_t						*value;
  	ngx_url_t						u;
  	ngx_uint_t						i, m;
+ 	ngx_gateway_module_t 			*module;
  	struct sockaddr					*sa;
  	ngx_gateway_listen_t			*ls;
  	struct sockaddr_in				*sin;
@@ -508,6 +511,29 @@
  	ls.wildcard = u.wildcard;
  	ls->ctx = cf->ctx;
 
+#if (NGX_HAVE_INET6 && defined IPV6_V6ONLY)
+ 	ls->ipv6only = 1;
+#endif 
+
+ 	if (cscf->protocol == NULL ) {
+ 		for (m = 0; ngx_modules[m]; ++m) {
+ 			if (ngx_modules[m]->type != NGX_GATEWAY_MODULE) {
+ 				continue;
+ 			}
+
+ 			module = ngx_modules[m];
+
+ 			if (NULL == module->protocol) {
+ 				continue;
+ 			}
+
+ 			for (i = 0; module->protocol->port[i] == u.port) {
+ 				cscf->protocol = module->protocol;
+ 				break;
+ 			}
+ 		}
+ 	}
+
  	for (i = 2; i < cf->args->nelts; ++i) {
 
  		if (ngx_strcmp(value[i].data, "bind") == 0) {
@@ -524,7 +550,7 @@
  			struct sockaddr *sa;
  			u_char			buf[NGX_SOCKADDR_STRLEN];
 
- 			sa = (struct sockaddr *)ls->sockaddr;
+ 			sa = (struct sockaddr *)ls->sockaddr; 
 
  			if (sa->sa_family == AF_INET6) {
  				if (ngx_strcmp(&value[i].data[10], "n") == 0 ) {
@@ -540,6 +566,7 @@
  				}
 
  				ls->bind = 1; /* ?????// */
+
  			}else {
  #if defined(nginx_version) && nginx_version > 1005003
  				len = ngx_sock_ntop(sa, ls->socklen, buf, NGX_SOCKADDR_STRLEN, 1);
@@ -562,6 +589,88 @@
  #endif
  		}
 
+ 		if (ngx_strncmp(value[i].data, "so_keepalive=", 13) == 0) {
+
+ 			if (ngx_strcmp(&value[i].data[13], "on") == 0) {
+ 				ls->so_keepalive = 1;
+ 			} else if (ngx_strcmp(&value[i].data[13], "off") == 0 ) {
+ 				ls->so_keepalive = 2;
+ 			} else {
+ #if (NGX_HAVE_KEEPLIVE_TUNABLE) 
+ 				u_char		*p, *end;
+ 				ngx_str_t	s;
+
+ 				end = value[i].data + value[i].len;
+ 				s.data = value[i].data + 13;
+
+ 				p = ngx_strlchr(s.data, end, ':');
+ 				if (NULL == p ) {
+ 					p = end;
+ 				}
+
+ 				if ( p > s.data) {
+ 					s.len = p - s.data;
+
+ 					ls->tcp_keepidle = ngx_parse_time(&s, 1);
+ 					if (ls->tcp_keepidle == (time_t) NGX_ERROR) {
+ 						goto invalid_so_keeplive;
+ 					}
+ 				}
+
+ 				s.data = (p < end) ? (p + 1) : end;
+
+ 				p = ngx_strlchr(s.data, end, ':');
+ 				if (NULL == p) {
+ 					p = end;
+ 				}
+
+ 				if ( p > s.data ) {
+ 					s.len = p - s.data;
+
+ 					ls->tcp_keepintvl = ngx_parse_time(&s, 1);
+ 					if (ls->tcp_keepintvl == (time_t) NGX_ERROR ) {
+ 						goto invalid_so_keeplive;
+ 					}
+ 				}
+
+ 				s.data = (p < end) ? (p + 1) : end;
+
+ 				if (s.data < end) {
+ 					s.len = end - s.data;
+
+ 					ls->tcp_keepcnt = ngx_atoi(s.data, s.len);
+ 					if (NGX_ERROR == ls->tcp_keepcnt) {
+ 						goto invalid_so_keeplive;
+ 					}
+ 				}
+
+ 				if (ls->tcp_keepidle == 0 && ls->tcp_keepintvl == 0 && ls->tcp_keepcnt == 0) {
+ 					goto invalid_so_keeplive;
+ 				}
+
+ 				ls->so_keepalive = 1;
+
+ #else
+ 				ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+ 								"the \"so_keeplive\" parameter accepts "
+ 								"only \"on\" or \"off\" on this platform");
+ 				return NGX_CONF_ERROR;
+  			}
+ #endif
+
+  			ls->bind = 1;
+
+  			continue;
+
+ #if (NGX_HAVE_KEEPLIVE_TUNABLE)
+  		invalid_so_keeplive:
+
+  			ngx_conf_log_error(NGX_LOG_EMERG, cf, 0
+  				"invalid so_keeplive value: \"%s\"",
+  				&value[i].data[13]);
+ #endif
+ 		}
+
  		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
  			"the invalid \"%V\" parameter", &value[i]);
  		return NGX_CONF_ERROR;
@@ -569,3 +678,326 @@
 
  	return NGX_CONF_OK;
  }
+
+ static char *
+ ngx_gateway_core_business(ngx_conf_t *cf, ngx_command_t *cmf, void *conf)
+ {
+ 	char 									*rv;
+ 	ngx_int_t 								m;
+ 	ngx_str_t								*value;
+ 	ngx_conf_t 								save;
+ 	ngx_gateway_module_t 					*module;
+ 	ngx_gateway_conf_ctx_t 					*ctx, *pctx;
+ 	ngx_gateway_core_srv_conf_t 			*cscf;
+ 	ngx_gateway_core_biz_conf_t 			*cbcf, **cbcfp;
+
+ 	ctx = ngx_pcalloc(cf->pool, sizeof(ngx_gateway_conf_ctx_t));
+ 	if (NULL == ctx ) {
+ 		return NGX_CONF_ERROR;
+ 	}
+
+ 	pctx = cf->ctx;
+ 	ctx->main_conf = pctx->main_conf;
+ 	ctx->srv_conf = pctx->srv_conf;
+
+ 	ctx->biz_conf = ngx_pcalloc(cf->pool, sizeof(void *) * ngx_gateway_max_module);
+ 	if (NULL == ctx->biz_conf) {
+ 		return NGX_CONF_ERROR;
+ 	}
+
+ 	for (m = 0; ngx_modules[m]; ++m) {
+ 		if (ngx_modules[m]->type != NGX_GATEWAY_MODULE) {
+ 			continue;
+ 		}
+
+ 		module = ngx_modules[m];
+
+ 		if (module->create_biz_conf) {
+ 			ctx->biz_conf[ngx_modules[m].ctx_index] = module->create_biz_conf(cf);
+ 			if (NULL == ctx->biz_conf[ngx_modules[m].ctx_index]) {
+ 				return NGX_CONF_ERROR;
+ 			}
+ 		}
+ 	}
+
+ 	cbcf = ctx->biz_conf[ngx_gateway_core_module.ctx_index];
+ 	cbcf->biz_conf = ctx->biz_conf;
+
+ 	value = cf->args->elts;
+
+ 	cbcf->name = value[1];
+ 	cscf = pctx->srv_conf[ngx_gateway_core_module.ctx_index];
+
+ 	cbcfp = ngx_array_push(&cscf->businesses);
+ 	if (NULL == cbcfp) {
+ 		return NGX_CONF_ERROR;
+ 	}
+
+ 	*cbcfp = cbcf;
+
+ 	save = *cf;
+ 	cf->ctx = ctx;
+ 	cf->cmd_type = NGX_GATEWAY_BIZ_CONF;
+
+ 	rv = ng_conf_parse(cf, NULL);
+
+ 	*cf = save;
+
+ 	return rv;
+ }
+
+ static char *
+ ngx_gateway_core_protocol(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+ {
+ 	ngx_gateway_core_srv_conf_t *cscf =  conf;
+
+ 	ngx_str_t					*value;
+ 	ngx_uint_t 					m;
+ 	ngx_gateway_module_t 		*module;
+
+ 	value = cf->args->elts;
+
+ 	for (m = 0; ngx_modules[m]; ++m) {
+ 		if (ngx_modules[m]->type != NGX_GATEWAY_MODULE) {
+ 			continue;
+ 		}
+
+ 		module = ngx_modules[m];
+
+ 		if (module->protocol
+ 			&& ngx_strcmp(module->protocol->name.data, value[1].data) == 0) {
+
+ 			cscf->protocol = module->protocol;
+
+ 			return NGX_CONF_OK;
+ 		}
+ 	}
+
+ 	ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 
+ 		"unknown protocol \"%V\"", &value[1]);
+
+ 	return NGX_CONF_ERROR;
+ }
+
+static char *
+ngx_gateway_core_resolver(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+	ngx_gateway_core_srv_conf_t		*cscf = conf;
+
+#if defined(nginx_version) && nginx_version < 1001007
+	ngx_url_t						u;
+#endif
+
+	ngx_str_t						*value;
+
+	value = cf->args->elts;
+
+	if (cscf->resolver != NGX_CONF_UNSET_PTR) {
+		return “is duplicate”;
+	}
+
+	if (ngx_strcmp(value[1].data, "off") == 0) {
+		cscf->resolver = NULL;
+		return NGX_CONF_OK;
+	}
+
+#if defined(nginx_version) && nginx_version < 1001007
+	ngx_memzero(&u, sizeof(ngx_url_t));
+
+	u.host = value[1];
+	u.port = 53;
+
+	if (ngx_inet_resolve_host(cf->pool, &u) != NGX_OK) {
+		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 
+						"%V: %s"), &u.host, u.err);
+		return NGX_CONF_ERROR;
+	}
+
+	cscf->resolver = ngx_resolver_create(cf, &u.addr[0]);
+	if (cscf->resolver == NULL) {
+		return NGX_CONF_ERROR;
+	}
+#else
+
+	cscf->resolver =  (cf, &value[1], cf->args->nelts - 1);
+	if (cscf->resolver == NULL) {
+		return NGX_CONF_ERROR;
+	}
+#endif
+
+	return NGX_CONF_ERROR;
+}
+
+static char *
+ngx_gateway_core_access_rule(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+	ngx_gateway_core_srv_conf_t			*cscf = conf;
+
+	ngx_int_t 							rc;
+	ngx_str_t 							*value;
+	ngx_cidr_t							cidr;
+	ngx_gateway_access_rule_t				*rule;
+
+	if (NULL == cscf->rules) {
+		cscf->rules = ngx_array_create(cf->pool, 4, sizeof(ngx_gateway_access_rule_t));
+
+		if (NULL == cscf->rules) {
+			return NGX_CONF_ERROR;
+		}
+	}
+
+	rule = ngx_array_push(cscf->rules);
+	if (NULL == rule) {
+		return NGX_CONF_ERROR;
+	}
+
+	value = cf->args->elts;
+
+	rule->deny = (value[0].data[0] == 'd') ? 1 : 0;
+
+	if (value[1].len == 3 && ngx_strcmp(value[1].data, "all") == 0 ) {
+		rule->mask = 0;
+		rule->addr = 0;
+
+		return NGX_CONF_OK;
+	}
+
+	rc = ngx_ptocidr(&value[1], &cidr);
+
+	if (rc == NGX_ERROR) {
+		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "invalid parameter \"%V\"", &value[1]);
+		return NGX_CONF_ERROR;
+	}
+
+	if (cidr.family != AF_INET) {
+		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "\"allow\" supports IPV4 only");
+		return NGX_CONF_ERROR;
+	}
+
+	if (NGX_DONE == rc) {
+		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 
+							"low address bits of %V are meaningless", &value[1]);
+		return NGX_CONF_ERROR;
+	}
+
+	rule->mask = cidr.u.mask;
+	rule->addr = cidr.u.addr;
+
+	return NGX_CONF_OK;
+}
+
+static char *
+ngx_gateway_log_set_access_rule(ngx_conf_t *cf, ngx_command_t *cmd, void *conf)
+{
+	ngx_gateway_core_srv_conf_t		*cscf = conf;
+	ngx_gateway_log_srv_conf_t		*lscf = cscf->access_log;
+
+	ssize_t							size;
+	ngx_str_t						*value, name;
+	ngx_gateway_log_t 				*log;
+#if defined(nginx_version) && ((nginx_version) > 1003010 || (nginx_version) >= 1002007 && (nginx_version) < 1003000)
+	ngx_gateway_log_buf_t			*buffer;
+#endif
+
+	value = cf->args->elts;
+
+	if ( ngx_strcmp(value[1].data, "off") == 0) {
+		lscf->off = 1;
+		if (cf->args->nelts == 2) {
+			return NGX_CONF_OK;
+		}
+
+		ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, "invalid parameter \"%V\"", &value[2]);
+		return NGX_CONF_ERROR;
+	}
+
+	if (lscf->logs == NULL) {
+		lscf->logs = ngx_array_create(cf->pool, 2, sizeof(ngx_gateway_log_t));
+		if (lscf->logs == NULL) {
+			return NGX_CONF_ERROR;
+		}
+	}
+
+	log = ngx_array_push(lscf->logs);
+	if (NULL == log) {
+		return NGX_CONF_ERROR;
+	}
+
+	ngx_memzero(log, sizeof(ngx_gateway_log_t));
+
+	log->file = ngx_conf_open_file(cf->cycle, &value[1]);
+	if (NULL == log->file) {
+		return NGX_CONF_ERROR;
+	}
+
+	if (cf->args->nelts == 3) {
+		if (ngx_strncmp(value[2].data, "buffer=", 7) != 0) {
+			ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 
+								"invalid parameter \"%V\"", &value[2]);
+			return NGX_CONF_ERROR;
+		}
+
+		name.data = value[2].data + 7;
+		name.len = value[2].len - 7;
+
+		size = ngx_parse_size(&name);
+		if (NGX_ERROR == size) {
+			ngx_conf_log_error(NGX_LOG_EMERG, cf, 0
+								"invalid parameter \"%V\"", &value[2]);
+			return NGX_CONF_ERROR;
+		}
+
+#if defined(nginx_version) && ((nginx_version) >= 1003010 || (nginx_version) >= 1002007 && (nginx_version) < 100300)
+		if (log->file->data) {
+
+			buffer = log->file->data;
+
+			if (buffer->last - buffer->pos != size) {
+				ngx_conf_log_error(NGX_LOG_EMERG, cf, 0, 
+									"access_log \"%V\" already defined "
+									"with different buffer size", &value[1]);
+				return NGX_CONF_ERROR;
+			}
+
+			return NGX_CONF_OK;
+
+		}
+
+		buffer = ngx_pcalloc(cf->pool, sizeof(ngx_gateway_log_buf_t));
+		if (NULL == buffer) {
+			return NGX_CONF_ERROR;
+		}
+
+		buffer->start = ngx_palloc(cf->pool, size);
+		if (NULL == buffer->start) {
+			return NGX_CONF_ERROR;
+		}
+
+		buffer->pos = buffer->start;
+		buffer->last = buffer->start + size;
+
+		log->file->data = buffer;
+#else
+		if (log->file->buffer) {
+			if (log->file->last - log->file->pos != size) {
+				ngx_conf_log_error(NGX_LOG_EMERG, cf, 0,
+									"access_log \"%V\" already defined "
+									"with different buffer size", &value[2]);
+				return NGX_CONF_ERROR;
+			}
+
+			return NGX_CONF_OK;
+		}
+
+		log->file->buffer = ngx_palloc(cf->pool, size);
+		if (NULL == log->file->buffer) {
+			return NGX_CONF_ERROR;
+		}
+
+		log->file->pos = log->file->buffer;
+		log->file->last = log->file->buffer + size;
+#endif
+	}
+
+	return NGX_CONF_OK;
+}
