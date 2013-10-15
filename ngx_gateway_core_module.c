@@ -508,7 +508,7 @@
  	ngx_memcpy(ls, u.sockaddr, u.socklen);
 
  	ls->socklen = u.socklen;
- 	ls.wildcard = u.wildcard;
+ 	ls->wildcard = u.wildcard;
  	ls->ctx = cf->ctx;
 
 #if (NGX_HAVE_INET6 && defined IPV6_V6ONLY)

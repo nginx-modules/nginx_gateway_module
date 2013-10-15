@@ -333,6 +333,9 @@ FOUND:
 	addr->ctx = listen->ctx;
 	addr->bind = listen->bind;
 	addr->wildcard = listen->wildcard;
+	if (listen->default_port) {
+		addr->default_ctx = listen->ctx;
+	}
 	addr->so_keeplive = listen->so_keeplive;
 #if (NGX_HAVE_KEEPLIVE_TUNABLE)
 	addr->tcp_keepidle = listen->tcp_keepidle;

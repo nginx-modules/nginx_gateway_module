@@ -48,4 +48,18 @@
 
  void ngx_gateway_init_connection(ngx_connection_t *c);
 
+ void ngx_gateway_send(ngx_event_t *wev);
+ ngx_int_t ngx_tcp_read_command(ngx_gateway_session_t *s, ngx_connection_t *c);
+ void ngx_gateway_close_connection(ngx_connection_t *c);
+ void ngx_gateway_session_internal_server_error(ngx_gateway_session_t *s);
+
+ u_char *ngx_gateway_log_error(ngx_log_t *log, u_char *buf, size_t len);
+
+ void ngx_gateway_finalize_session(ngx_gateway_session_t *s);
+
+ ngx_gateway_cleanup_t *ngx_gateway_clean_add(ngx_gateway_session_t *s, size_t size);
+
+ ngx_int_t ngx_gateway_access_handler(ngx_gateway_session_t *s);
+ ngx_int_t ngx_gateway_log_handler(ngx_gateway_session_t *s);
+
  #endif

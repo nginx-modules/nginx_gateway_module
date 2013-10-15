@@ -44,7 +44,8 @@ typedef struct {
 } ngx_gateway_listen_t;
 
 typedef struct {
-    ngx_gateway_conf_ctx_t    *ctx;
+    ngx_gateway_conf_ctx_t  *ctx;
+    ngx_gateway_conf_ctx_t  *default_ctx;
     ngx_str_t               addr_text;
 } ngx_gateway_addr_conf_t;
 
@@ -78,7 +79,8 @@ typedef struct {
 	struct sockaddr        *sockaddr;
     socklen_t               socklen;
 
-    ngx_gateway_conf_ctx_t    *ctx;
+    ngx_gateway_conf_ctx_t  *ctx;
+    ngx_gateway_conf_ctx_t  *default_ctx;      
 
     unsigned                bind:1;
     unsigned                wildcard:1;
