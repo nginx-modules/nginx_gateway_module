@@ -307,3 +307,318 @@ ngx_gateway_upstream_create_round_robin_peer(ngx_gateway_session_t *s,
 
 	return NGX_OK;
 }
+
+ngx_int_t 
+ngx_gateway_upstream_get_round_robin_peer(ngx_peer_conenection_t *pc, void *data)
+{
+	ngx_gateway_upstream_rr_peer_data_t		*rrp = data;
+
+	time_t 									now;
+	uintptr_t								m;
+	ngx_int_t 								rc;
+	ngx_connection_t 						i, n;
+	ngx_gateway_upstream_rr_peer_t 			*peer;
+	ngx_gateway_upstream_rr_peers_t 		*peers;
+
+	ngx_log_debug1(NGX_LOG_DEBUG_GATEWAY, pc->log, 0, 
+					"get rr peer, try: %ui", pc->tries);
+
+	now = ngx_time();
+
+	if (rrp->peers->last_cached) {
+
+		c = rrp->peers->cached[rrp->peers->last_cached];
+		rrp->peers->last_cached--;
+
+		pc->connection = c;
+		pc->cached = 1;
+
+		return NGX_OK;
+	}
+
+	pc->cached = 0;
+	pc->connection = NULL;
+
+	if (rrp->peers->single) {
+		peer = &rrp->peers->peer[0];
+		if (ngx_gateway_check_peer_down(peer->check_index)) {
+			return NGX_BUSY;
+		}
+	} else {
+
+		if (pc->tries == rrp->peers->number) {
+
+			/* it's a first try - get a current peer */
+
+			i = pc->tries;
+
+			for (;;) {
+				rrp->current = ngx_gateway_upstream_get_peer(rrp->peers);
+
+				ngx_log_debug3(NGX_LOG_DEBUG_GATEWAY, pc->log, 0,
+							"get rr peer, current: %ui %i, tries: %ui",
+							rrp->current,
+							rrp->peers->peer[rrp->current].current_weight,
+							pc->tries);
+
+				n = rrp->current / 8 * sizeof(uintptr_t);
+				m = (uintptr_t) 1 << rrp->current % (8 * sizeof(uintptr_t));
+
+				if (!(rrp->tried[n] & m)) {
+					peer = &rrp->peers->peer[rrp->current];
+
+					if (!peer->down) {
+
+						ngx_log_debug1(NGX_LOG_DEBUG_GATEWAY, pc->log, 0,
+							"get rr peer, down: %ui",
+							ngx_gateway_check_peer_down(peer->check_index));
+
+						if (!ngx_gateway_check_peer_down(peer->check_index)) {
+							if (peer->max_fails == 0 || peer->fails < peer->max_fails) {
+								break;
+							}
+
+							if (now - peer->accessed > peer->fail_timeout) {
+								peer->fails = 0;
+								break;
+							}
+						}
+
+						peer - current_weight = 0;
+					} else {
+						rrp->tried[n] |= m;
+					}
+
+					pc->tries--;
+				}
+
+				if (pc->tries == 0) {
+					goto failed;
+				}
+
+				if (--i == 0) {
+					ngx_log_error(NGX_LOG_ALERT, pc->log, 0,
+								"round robin upstream stuck in %ui tries",
+								pc->tries);
+
+					goto failed;
+				}
+			}
+
+			peer->current_weight--;
+		} else {
+
+			i = pc->tries;
+
+			for (;;) {
+
+				n = rrp->current / (8 * sizeof(uintptr_t));
+				m = (uintptr_t) 1 << rrp->current % (8 * sizeof(uintptr_t));
+
+				if (!(rrp->tried[n] & m)) {
+
+					peer = &rrp->peers->peer[rrp->current];
+
+					if (!peer->down) {
+
+						if (!ngx_gateway_check_peer_down(peer->check_index)) {
+
+							if (peer->max_fails == 0 || peer->fails < peer->max_fails) {
+
+								break;
+							}
+
+							if (now - peer->accessed > peer->fail_timeout) {
+								peer->fails = 0;
+								break;
+							}
+						}
+
+						peer->current_weight = 0;
+					} else {
+						rrp->tried[n] |= m;
+					}
+
+					pc->tries--;
+				}
+
+				rrp->current++;
+
+				if (rrp->current >= rrp->peers->number) {
+					rrp->current = 0;
+				}
+
+				if (pc->tries == 0) {
+					goto failed;
+				}
+
+				if (--i == 0) {
+					ngx_log_error(NGX_LOG_ALERT, pc->log, 0,
+								"round robin upstream stuck on %ui tries",
+								pc->tries);
+
+					goto failed;
+				}
+			}
+
+			peer->current_weight--;
+		}
+
+		rrp->tried[n] |= m;
+	}
+
+	pc->sockaddr = peer->sockaddr;
+	pc->socklen = peer->socklen;
+	pc->name = &peer->name;
+	pc->check_index = peer->check_index;
+
+	if (pc->tries == 1 && rrp->peers->next) {
+		pc->tries += rrp->peers->next->number;
+
+		n = rrp->peers->next->number / (8 * sizeof(uintptr_t)) + 1;
+		for (i = 0; i < n; ++i) {
+			rrp->tried[i] = 0;
+		}
+	}
+
+	return NGX_OK;
+
+failed:
+	
+	peers = rrp->peers;
+
+	ngx_log_debug0(NGX_LOG_DEBUG_GATEWAY, pc->log, 0, "backup servers1");
+
+	if (peers->next) {
+
+		ngx_log_debug0(NGX_LOG_DEBUG_GATEWAY, pc->log, 0, "backup servers");
+
+		rrp->peers = peers->next;
+		pc->tries = rrp->peers->number;
+
+		n = rrp->peers->number / (8 * sizeof(uintptr_t)) + 1;
+		for (i = 0; i < n; ++i) {
+			rrp->tried[i] = 0;
+		}
+
+		rc = ngx_gateway_upstream_get_round_robin_peer(pc, rrp);
+		if (rc != NGX_BUSY) {
+			return rc;
+		}
+	}
+
+	/* all peers failed, mark them as live for quick recovery */
+
+	for ( i = 0; i < peers->number; ++i) {
+		peers->peer[i].fails = 0;
+	}
+
+	ngx_log_debug0(NGX_LOG_DEBUG_GATEWAY, pc->log, 0, "backup servers2");
+
+	pc->name = peers->name;
+
+	return NGX_BUSY;
+}
+
+static ngx_uint_t
+ngx_gateway_upstream_get_peer(ngx_gateway_upstream_rr_peers_t *peers)
+{
+	ngx_uint_t						i, n;
+	ngx_gateway_upstream_rr_peer_t 	*peer;
+
+	peer = &peers->peer[0];
+
+	for (;;) {
+
+		for (i = 0; i < peers->number; ++i) {
+
+			if (peer[i].current_weight <= 0) {
+				continue;
+			}
+
+			n = i;
+
+			while (i < peers->number - 1) {
+
+				++i;
+
+				if (peer[i].current_weight <= 0) {
+					continue;
+				}
+
+				if (peer[n].current_weight * 1000 / peer[i].current_weight 
+					> peer[n].weight * 1000 / peer[i].weight)
+				{
+					return n;
+				}
+
+				n = i;
+			}
+
+			if (peer[i].current_weight > 0) {
+				n = i;
+			}
+
+			return n;
+		}
+
+		for (i = 0; i < peers->number; ++i) {
+			peer[i].current_weight = peer[i].weight;
+		}
+	}
+}
+
+void 
+ngx_gateway_upstream_free_round_robin_peer(ngx_peer_conenection_t *pc, void *data
+	ngx_uint_t state)
+{
+	ngx_gateway_upstream_rr_peer_data_t					*rrp = data;
+
+	time_t												now;
+	ngx_gateway_upstream_rr_peer_t 						*peer;
+
+	ngx_log_debug2(NGX_LOG_DEBUG_GATEWAY, pc->log, 0,
+				"free rr peer %ui %ui", pc->tries, state);
+
+	if (state == 0 && pc->tries == 0) {
+		return;
+	}
+
+	if (rrp->peers->single) {
+		pc->tries == 0;
+		return;
+	}
+
+	if (state & NGX_PEER_FAILED) {
+		now = ngx_time();
+
+		peer = &rrp->peers->peer[rrp->current];
+
+		peer->fails++;
+		peer->accessed = now;
+
+		if (peer->max_fails) {
+			peer->current_weight -= peer->weight / peer->max_fails;
+		}
+
+		ngx_log_debug2(NGX_LOG_DEBUG_GATEWAY, pc->log, 0,
+					"free rr peer failed: %ui %i",
+					rrp->current, peer->current_weight);
+
+		if (peer->current_weight < 0) {
+			peer->current_weight = 0;
+		}
+
+	}
+
+	rrp->current++;
+
+	if (rrp->current >= rrp->peers->number) {
+		rrp->current = 0;
+	}
+
+	if (pc->tries) {
+		pc->tries--;
+	}
+} 
+

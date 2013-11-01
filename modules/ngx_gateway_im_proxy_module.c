@@ -11,6 +11,8 @@
  typedef struct ngx_gateway_im_proxy_s {
  	ngx_peer_connection_t			*upstream;
  	ngx_buf_t						*buffer;
- };
+ }ngx_gateway_im_proxy_ctx_t;
+
+ 
 
  

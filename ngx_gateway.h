@@ -11,10 +11,23 @@
  #include <ngx_event.h>
  #include <ngx_event_connect.h>
 
- typedef ngx_gateway_protocol_s ngx_gateway_protocol_t;
- typedef ngx_gateway_cleanup_s  ngx_gateway_cleanup_t;
+ typedef struct ngx_gateway_protocol_s ngx_gateway_protocol_t;
+ typedef struct ngx_gateway_cleanup_s  ngx_gateway_cleanup_t;
+ typedef struct ngx_gateway_upstream_s ngx_gateway_upstream_t;
+
+ typedef struct ngx_gateway_core_srv_conf_s ngx_gateway_core_srv_conf_t;
+
+ typedef struct ngx_gateway_upstream_srv_conf_s ngx_gateway_upstream_srv_conf_t;
+ typedef struct ngx_gateway_upstream_resolved_s ngx_gateway_upstream_resolved_t;
+
+ typedef struct ngx_gateway_check_peer_conf_s ngx_gateway_check_peer_conf_t;
+ typedef struct ngx_gateway_check_peers_conf_s ngx_gateway_check_peers_conf_t;
+ typedef struct check_conf_s check_conf_t;
 
  #include <ngx_gateway_session.h>
+ #include <ngx_gateway_upstream.h>
+ #include <ngx_gateway_upstream_check.h>
+ #include <ngx_gateway_upstream_round_robin.h>
 
 typedef struct {
 	void				**main_conf;
