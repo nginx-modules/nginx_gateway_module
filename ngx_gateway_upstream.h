@@ -150,7 +150,7 @@ struct ngx_gateway_upstream_s {
 
 	ngx_peer_connection_t					peer;
 	ngx_gateway_upstream_conf_t 			*conf;
-	ngx_gateway_upstream_resolved_t			&resolved;
+	ngx_gateway_upstream_resolved_t			*resolved;
 	ngx_gateway_upstream_state_t 			*state;
 	ngx_gateway_cleanup_pt 					*cleanup;
 };
