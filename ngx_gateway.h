@@ -143,6 +143,8 @@ typedef struct {
     ngx_uint_t              off;            /* unsigned off:1 */
 } ngx_gateway_log_srv_conf_t;
 
+#define NGX_GATEWAY_IM_PROXY_PROTOCOL           0
+
 typedef struct {
     ngx_array_t             businesses;     /* array of ngx_gateway_core_biz_conf_t */
 
