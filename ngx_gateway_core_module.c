@@ -62,6 +62,15 @@
  	},
 
  	{
+ 		ngx_string("buffer_size"),
+ 		NGX_GATEWAY_SRV_CONF|NGX_CONF_TAKE1,
+ 		ngx_conf_set_size_slot,
+ 		NGX_GATEWAY_SRV_CONF_OFFSET,
+ 		offsetof(ngx_gateway_core_srv_conf_t, buffer_size),
+ 		NULL
+ 	},
+
+ 	{
  		ngx_string("so_keepalive"),
  		NGX_GATEWAY_MAIN_CONF|NGX_GATEWAY_SRV_CONF|NGX_CONF_FLAG,
  		ngx_conf_set_flag_slot,
@@ -106,7 +115,7 @@
  		NGX_GATEWAY_MAIN_CONF|NGX_GATEWAY_SRV_CONF|NGX_CONF_TAKE1,
  		ngx_conf_set_msec_slot,
  		NGX_GATEWAY_SRV_CONF_OFFSET,
- 		0,
+ 		offsetof(ngx_gateway_core_srv_conf_t, resolver_timeout),
  		NULL
  	},
 
@@ -213,6 +222,8 @@
  		return NULL;
  	}
 
+ 	cscf->buffer_size = NGX_CONF_UNSET_SIZE;
+
  	cscf->timeout = NGX_CONF_UNSET_MSEC;
  	cscf->resolver_timeout = NGX_CONF_UNSET_MSEC;
  	cscf->so_keepalive = NGX_CONF_UNSET;
@@ -244,6 +255,8 @@
  	ngx_gateway_core_srv_conf_t *conf = child;
  	ngx_gateway_log_srv_conf_t	*plscf = prev->access_log;
  	ngx_gateway_log_srv_conf_t	*lscf = conf->access_log;
+
+ 	ngx_conf_merge_size_value(conf->buffer_size, prev->buffer_size, (size_t) ngx_pagesize * 2);
 
  	ngx_conf_merge_msec_value(conf->timeout, prev->timeout, 60000);
  	ngx_conf_merge_msec_value(conf->resolver_timeout, prev->resolver_timeout, 30000);

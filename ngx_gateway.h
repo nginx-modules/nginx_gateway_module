@@ -150,6 +150,8 @@ typedef struct {
 
     ngx_gateway_protocol_t  *protocol;
 
+    ngx_uint_t              buffer_size;
+
     ngx_msec_t              timeout;
     ngx_msec_t              resolver_timeout;
 
@@ -214,7 +216,7 @@ typedef struct {
 
 #define NGX_GATEWAY_MAIN_CONF_OFFSET    offsetof(ngx_gateway_conf_ctx_t, main_conf)
 #define NGX_GATEWAY_SRV_CONF_OFFSET     offsetof(ngx_gateway_conf_ctx_t, srv_conf)
-#define NGX_GATEWAY_BIZ_CONG_OFFSET     offsetof(ngx_gateway_conf_ctx_t, biz_conf)
+#define NGX_GATEWAY_BIZ_CONF_OFFSET     offsetof(ngx_gateway_conf_ctx_t, biz_conf)
 
 #define ngx_gateway_get_module_ctx(s, module)       (s)->ctx[module.ctx_index]
 #define ngx_gateway_set_ctx(s, c, module)           s->ctx[module.ctx_index] = c;

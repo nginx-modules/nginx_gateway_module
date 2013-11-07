@@ -122,7 +122,7 @@ typedef struct {
 	ngx_gateway_upstream_srv_conf_t 		*upstream;
 
 	ngx_msec_t								connect_timeout;
-	ngx_msec_t 								send_timeout;
+	ngx_msec_t 								write_timeout;
 	ngx_msec_t								read_timeout;
 	ngx_msec_t								timeout;
 } ngx_gateway_upstream_conf_t;
