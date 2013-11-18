@@ -14,6 +14,7 @@
  typedef struct ngx_gateway_protocol_s ngx_gateway_protocol_t;
  typedef struct ngx_gateway_cleanup_s  ngx_gateway_cleanup_t;
  typedef struct ngx_gateway_upstream_s ngx_gateway_upstream_t;
+ typedef struct ngx_gateway_request_s ngx_gateway_request_t;
 
  typedef struct ngx_gateway_core_srv_conf_s ngx_gateway_core_srv_conf_t;
 
@@ -158,6 +159,8 @@ typedef struct {
     ngx_flag_t              so_keepalive;
     ngx_flag_t              tcp_nodelay;
 
+    size_t                  request_pool_size;
+
     u_char                  *file_name;
     ngx_int_t               line;
 
@@ -218,9 +221,9 @@ typedef struct {
 #define NGX_GATEWAY_SRV_CONF_OFFSET     offsetof(ngx_gateway_conf_ctx_t, srv_conf)
 #define NGX_GATEWAY_BIZ_CONF_OFFSET     offsetof(ngx_gateway_conf_ctx_t, biz_conf)
 
-#define ngx_gateway_get_module_ctx(s, module)       (s)->ctx[module.ctx_index]
-#define ngx_gateway_set_ctx(s, c, module)           s->ctx[module.ctx_index] = c;
-#define ngx_gateway_delete_ctx(s, module)           s->ctx[module.ctx_index] = NULL;
+#define ngx_gateway_get_module_ctx(r, module)       (r)->ctx[module.ctx_index]
+#define ngx_gateway_set_ctx(r, c, module)           r->ctx[module.ctx_index] = c;
+#define ngx_gateway_delete_ctx(r, module)           r->ctx[module.ctx_index] = NULL;
 
 #define ngx_gateway_get_module_main_conf(s, module)                                 \
     (s)->main_conf[module.ctx_index]

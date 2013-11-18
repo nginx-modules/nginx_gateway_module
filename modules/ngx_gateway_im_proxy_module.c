@@ -7,13 +7,21 @@
  #include <ngx_core.h>
  #include <ngx_gateway.h>
 
+ typedef struct ngx_gateway_im_proxy_request_data_s {
+ 	ngx_uint_t 						version;
+ 	ngx_uint_t						session_id;
+ 	ngx_uint_t						return_code;
+ 	ngx_uint_t						seq;
+ 	ngx_uint_t						key;
+ 	ngx_uint_t 						len;
+ }ngx_gateway_im_proxy_request_data_t;
 
  typedef struct ngx_gateway_im_proxy_s {
  	ngx_peer_connection_t			*upstream;
  	ngx_buf_t						*buffer;
  }ngx_gateway_im_proxy_ctx_t;
 
- typedef struct ngx_gateway_im_proxy_conf_s {
+ typedef struct ngx_gateway_im_proxy_biz_conf_s {
  	ngx_gateway_upstream_conf_t 	upstream;
 
  	ngx_str_t 						url;
@@ -23,17 +31,17 @@
  static void ngx_gateway_im_proxy_init_session(ngx_gateway_session_t *s);
  static void ngx_gateway_im_proxy_init_protocol(ngx_event_t *ev);
  static void ngx_gateway_im_proxy_parse_protocol(ngx_event_t *ev); 
- static void ngx_gatway_im_proxy_init_upstream(ngx_connection_t *c, ngx_gateway_session_t *s);
- static void ngx_gateway_upstream_init_proxy_handler(ngx_gateway_session_t *s,
+ static void ngx_gatway_im_proxy_init_upstream(ngx_connection_t *c, ngx_gateway_request_t *r);
+ static void ngx_gateway_upstream_init_proxy_handler(ngx_gateway_request_t *t,
  		ngx_gateway_upstream_t *u);
  static char *ngx_gateway_im_proxy_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf);
  static void ngx_gateway_im_proxy_dummy_read_hander(ngx_event_t *ev);
  static void ngx_gateway_im_proxy_dummy_write_handler(ngx_event_t *ev);
 
+ static im_proxy_request_parser_execute(ngx_gateway_session_t *s, ngx_gateway_request_t *r);
+
  static void ngx_gateway_im_proxy_handler(ngx_event_t *ev);
 
- static void *ngx_gateway_im_proxy_create_srv_conf(ngx_conf_t *cf);
- static char *ngx_gateway_im_proxy_merge_srv_conf(ngx_conf_t *cf, void *parent, void *child);
  static void *ngx_gateway_im_proxy_create_biz_conf(ngx_conf_t *cf);
  static char *ngx_gateway_proxy_merge_biz_conf(ngx_conf_t *cf, void *parent, void *child);
 
@@ -139,6 +147,7 @@
 
  	cscf = ngx_gateway_get_module_srv_conf(s, ngx_gateway_core_module);
 
+/*
  	iptx = ngx_pcalloc(s->connection->pool, sizeof(ngx_gateway_im_proxy_ctx_t));
  	if (NULL == iptx) {
  		ngx_gateway_finalize_session(s);
@@ -146,7 +155,7 @@
  	}
 
  	ngx_gateway_set_ctx(s, iptx, ngx_gateway_im_proxy_module);
-
+*/
  	s->buffer = ngx_create_temp_buffer(s->connection->pool, cscf->buffer_size);
  	if (NULL == s->buffer) {
  		ngx_gateway_finalize_session(s);
@@ -209,26 +218,239 @@
  static void 
  ngx_gateway_im_proxy_init_protocol(ngx_event_t *ev)
  {
+ 	ngx_connection_t 					*c;
+ 	ngx_gateway_session_t 				*s;
+ 	ngx_gateway_im_proxy_biz_conf_t 	*ipcf;
+
+ 	c = ev->data;
+ 	s = c->data;
+
+ 	ipcf = ngx_gateway_get_module_srv_conf(s, ngx_gateway_im_proxy_module);
+
+
+ 	c->read->handler = ngx_gateway_im_proxy_parse_protocol;
+
+ 	ngx_gateway_im_proxy_parse_protocol(ev);
+ }
+
+ static void 
+ ngx_gateway_im_proxy_parse_protocol(ngx_event_t *ev)
+ {
+ 	u_char								*new_buf;
+ 	ssize_t 							size, n;
+ 	ngx_int_t 							rc;
+ 	ngx_connection_t 					*c;
+ 	ngx_gateway_session_t				*s;
+ 	ngx_gateway_request_t 				*r;
+ 	ngx_gateway_im_proxy_biz_conf_t 	*ibcf;
+ 	ngx_gateway_core_srv_conf_t			*cscf;
+
+ 	c = ev->data;
+ 	s = c->data;
+
+ 	ibcf = ngx_gateway_get_module_biz_conf(s, ngx_gateway_im_proxy_module);
+
+ 	cscf = ngx_gateway_get_module_srv_conf(s, ngx_gateway_core_module);
+
+ 	while (1) {
+ 		n = s->buffer->end - s->buffer->last;
+ 		/* not enough buffer? Enlarge twice */
+ 		if (0 == n) {
+ 			size = s->buffer->end - s->buffer->start;
+
+ 			if ((size_t)size > cscf->buffer_size << 3) {
+
+ 				ngx_log_error(NGX_LOG_ERROR, ev->log, 0, 
+ 					"too large im packege "
+ 					"error whit client: %V #%d",
+ 					&c->addr_text, c->fd);
+
+ 				ngx_gateway_finalize_session(s);
+ 				return;
+ 			}
+
+ 			new_buf = ngx_palloc(c->pool, size *2);
+ 			if (NULL == new_buf) {
+ 				goto im_protocol_recv_fail;
+ 			}
+
+ 			n = s->buffer->pos - s->buffer->start;
+
+ 			ngx_memcpy(new_buf, s->buffer->pos, size - n);
+
+ 			
+ 			s->buffer->start = new_buf;
+ 			s->buffer->pos = new_buf;
+ 			s->buffer->last = new_buf + size;
+ 			s->buffer->end = new_buf + size * 2;
+
+ 			n = s->buffer->end - s->buffer->last;
+ 		}
+
+ 		size = c->recv(c, s->buffer->last, n);
+
+ #if (NGX_DEBUG)
+ 		ngx_err_t 				err;
+
+ 		if (size >= 0 || size == NGX_AGAIN) {
+ 			err = 0;
+ 		} else {
+ 			err = ngx_socket_errno;
+ 		}
+
+ 		ngx_log_debug3(NGX_LOG_DEBUG_GATEWAY, ev->log, err,
+ 						"im proxy recv size: %d, client: %V #%d",
+ 						size, &c->addr_text, c->fd);
+ #endif
+
+ 		if (size > 0) {
+ 			s->buffer->last += size;
+ 			continue;
+ 		} else if (size == 0 || size == NGX_AGAIN){
+ 			break;
+ 		} else {
+ 			c->error = 1;
+ 			goto im_protocol_recv_fail;
+ 		}
+  	}
+
+  	n = s->buffer->last - s->buffer->pos;
+
+ 	while (n > 0) {
+
+ 		r = ngx_gateway_create_request(s);
+ 		if (NULL == r) {
+ 			return;
+ 		}
+
+ 		rc = im_proxy_request_parser_execute(s, r);
+
+ 		switch (rc) {
+ 		case NGX_AGAIN:
+ 			ngx_gateway_close_request(r);
+ 			return;
+ 		case NGX_ERROR:
+ 			ngx_gateway_close_request(r);
+ 			goto im_protocol_recv_fail;
+ 		case NGX_OK:
+ 			ngx_gatway_im_proxy_init_upstream(c, r);
+ 		}
+
+ 		n = s->buffer->end - s->buffer->last;
+ 	}
+
+ im_protocol_recv_fail:
+
+ 	ngx_log_error(NGX_LOG_ERR, ev->log, 0,
+ 		"recv im packet error with client: %V #%d",
+ 		&c->addr_text, c->fd);
+
+ 	ngx_gateway_finalize_session(s); 
+
+ }
+
+ static ngx_int_t
+ im_proxy_request_parser_execute(ngx_gateway_session_t *s, ngx_gateway_request_t *r)
+ {
+ 	ngx_gateway_im_proxy_request_data_t		*iprd;
+ 	ngx_int_t 								rc;
+ 	size_t 									n;
+
+ 	iprd = ngx_pcalloc(r->pool, sizeof(ngx_gateway_im_proxy_request_data_t));
+ 	if (NULL == iprd) {
+ 		return NGX_ERROR;
+ 	}
+
+ 	r->data = iprd;
+
+ 	rc = NGX_AGAIN;
+
+ 	while (1) {
+ 		n = s->buffer->last - s->buffer->pos;
+ 		if (0 == n) {
+ 			break;
+ 		}
+
+ 		rc = check_data(s->buffer->pos, n, iprd);
+ 		if (NGX_ERROR == rc) {
+ 			s->buffer->last += 1;
+ 		} else {
+ 			break;
+ 		}
+ 	}
+
+ 	return rc;
+ }
+
+ static void 
+ ngx_gatway_im_proxy_init_upstream(ngx_connection_t *c, ngx_gateway_request_t *r)
+ {
  	
+ }
+
+ static char *
+ ngx_gateway_im_proxy_pass(ngx_conf_t *cf, ngx_command_t *cmd, void *conf) 
+ {
+ 	ngx_gateway_im_proxy_biz_conf_t		*ibcf = conf;
+
+ 	u_short 							port = 10000;
+ 	ngx_str_t 							*value, *url = &ibcf->url;
+ 	ngx_url_t							u;
+ 	ngx_gateway_core_srv_conf_t			*cscf;
+
+ 	cscf = ngx_gateway_conf_get_module_srv_conf(cf, ngx_gateway_core_module);
+
+ 	if (cscf->protocol && ngx_strncmp(cscf->protocol->name.data, 
+ 									(u_char *)"im_proxy",
+ 									sizeof("im_proxy") - 1) != 0) {
+ 		return "the protocol should be im_proxy";
+ 	}
+
+ 	if (cscf->protocol == NULL) {
+ 		cscf->protocol = &ngx_gateway_im_proxy_protocol;
+ 	}
+
+ 	if (ibcf->upstream.upstream) {
+ 		return "is duplicate";
+ 	}
+
+ 	value = cf->args->elts;
+
+ 	url = &value[1];
+
+ 	ngx_memzero(u, sizeof(ngx_url_t));
+
+ 	u.url.len = url->len;
+ 	u.url.data = url->data;
+ 	u.default_port = port;
+ 	u.uri_part = 1;
+ 	u.no_resolve = 1;
+
+ 	ibcf->upstream.upstream = ngx_gateway_upstream_add(cf, &u, 0);
+ 	if (NULL == ibcf->upstream.upstream) {
+ 		return NGX_CONF_ERROR;
+ 	}
+
+ 	return NGX_CONF_OK;
  }
 
  static void *
  ngx_gateway_im_proxy_create_biz_conf(ngx_conf_t *cf)
  {
- 	ngx_gateway_im_proxy_biz_conf_t *pbcf;
+ 	ngx_gateway_im_proxy_biz_conf_t *ibcf;
 
- 	pbcf = ngx_pcalloc(cf->pool, sizeof(ngx_gateway_im_proxy_biz_conf_t));
- 	if (NULL == pbcf) {
+ 	ibcf = ngx_pcalloc(cf->pool, sizeof(ngx_gateway_im_proxy_biz_conf_t));
+ 	if (NULL == ibcf) {
  		return NULL;
  	}
 
- 	pbcf->buffer_size = NGX_CONF_UNSET_SIZE;
+ 	ibcf->buffer_size = NGX_CONF_UNSET_SIZE;
 
- 	pbcf->upstream.connect_timeout = NGX_CONF_UNSET_MSEC;
- 	pbcf->upstream.write_timeout = NGX_CONF_UNSET_MSEC;
- 	pbcf->upstream.read_timeout = NGX_CONF_UNSET_MSEC;
+ 	ibcf->upstream.connect_timeout = NGX_CONF_UNSET_MSEC;i
+ 	ibcf->upstream.write_timeout = NGX_CONF_UNSET_MSEC;
+ 	ibcf->upstream.read_timeout = NGX_CONF_UNSET_MSEC;
 
- 	return pbcf;
+ 	return ibcf;
  }
 
  static char *

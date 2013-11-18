@@ -7,9 +7,9 @@
 static void ngx_gateway_upstream_cleanup(void *data);
 
 static void ngx_gateway_upstream_handler(ngx_event_t *ev);
-static void ngx_gateway_upstream_connect(ngx_gateway_session_t *s, ngx_gateway_upstream_t *u);
+static void ngx_gateway_upstream_connect(ngx_gateway_request_t *r, ngx_gateway_upstream_t *u);
 static void ngx_gateway_upstream_resolve_handler(ngx_resolver_ctx_t *ctx);
-static void ngx_gateway_upstream_finalize_session(ngx_gateway_session_t *s,
+static void ngx_gateway_upstream_finalize_session(ngx_gateway_request_t *r,
 									ngx_gateway_upstream_t *u, ngx_int_t rc);
 
 static char *ngx_gateway_upstream(ngx_conf_t *cf, ngx_command_t *cmd, void *dummy);
@@ -88,31 +88,31 @@ ngx_module_t ngx_gateway_upstream_module = {
 };
 
 ngx_int_t
-ngx_gateway_upstream_create(ngx_gateway_session_t *s)
+ngx_gateway_upstream_create(ngx_gateway_request_t *r)
 {
 	ngx_gateway_upstream_t 	*u;
 
-	u = s->upstream;
+	u = r->upstream;
 
 	if (u && u->cleanup) {
-		ngx_gateway_upstream_cleanup(s);
+		ngx_gateway_upstream_cleanup(r);
 	}
 
-	u = ngx_pcalloc(s->pool, sizeof(ngx_gateway_upstream_t));
+	u = ngx_pcalloc(r->pool, sizeof(ngx_gateway_upstream_t));
 	if (NULL == u) {
 		return NGX_ERROR;
 	}
 
-	s->upstream = u;
+	r->upstream = u;
 
-	u->peer.log = s->connection->log;
+	u->peer.log = r->connection->log;
 	u->peer.log_error = NGX_ERROR_ERR;
 
 	return NGX_OK;
 }
 
 void
-ngx_gateway_upstream_init(ngx_gateway_session_t *s)
+ngx_gateway_upstream_init(ngx_gateway_request_t *r)
 {
 	ngx_str_t 							*host;
 	ngx_uint_t 							i;
@@ -124,9 +124,9 @@ ngx_gateway_upstream_init(ngx_gateway_session_t *s)
 	ngx_gateway_upstream_srv_conf_t 	*uscf, **uscfp;
 	ngx_gateway_upstream_main_conf_t 	*umcf;
 
-	c = s->connection;
+	c = r->connection;
 
-	cscf = ngx_gateway_get_module_src_conf(s, ngx_gateway_core_module);
+	cscf = ngx_gateway_get_module_src_conf(r->s, ngx_gateway_core_module);
 
 	ngx_log_debug1(NGX_LOG_DEBUG_GATEWAY, c->log, 0, 
 					"gateway init upstream, client timer: %d", c->read->timer_set);
@@ -135,12 +135,12 @@ ngx_gateway_upstream_init(ngx_gateway_session_t *s)
 		ngx_del_timer(c->read);
 	}
 
-	u = s->upstream;
+	u = r->upstream;
 
-	cln = ngx_gateway_cleanup_add(s, 0);
+	cln = ngx_gateway_cleanup_add(r, 0);
 
 	cln->handler = ngx_gateway_upstream_cleanup;
-	cln->data = s;
+	cln->data = r;
 	u->cleanup = &cln->handler;
 
 	if (u->resolved == NULL) {
@@ -150,21 +150,21 @@ ngx_gateway_upstream_init(ngx_gateway_session_t *s)
 	} else {
 
 		if (u->resolved->sockaddr) {
-			if (ngx_gateway_upstream_create_round_robin_peer(s, u->resolved)
+			if (ngx_gateway_upstream_create_round_robin_peer(r, u->resolved)
 				!= NGX_OK) 
 			{
-				ngx_gateway_finalize_session(s);
+				ngx_gateway_close_request(r);
 				return;
 			}
 
-			ngx_gateway_upstream_connect(s, u);
+			ngx_gateway_upstream_connect(r, u);
 
 			return;
 		}
 
 		host = &u->resolved->host;
 
-		umcf = ngx_gateway_get_module_main_conf(s, ngx_gateway_upstream_module);
+		umcf = ngx_gateway_get_module_main_conf(r->s, ngx_gateway_upstream_module);
 
 		uscfp = umcf->upstreams.elts;
 		for ( i = 0; i < umcf->upstream.nelts; ++i) {
@@ -183,28 +183,28 @@ ngx_gateway_upstream_init(ngx_gateway_session_t *s)
 
 		ctx = ngx_resolve_start(cscf->resolver, &temp);
 		if (NULL == ctx) {
-			ngx_gateway_finalize_session(s);
+			ngx_gateway_close_request(r);
 			return;
 		}
 
 		if (ctx == NGX_NO_RESOLVER) {
 			ngx_log_error(NGX_LOG_ERR, c->log, 0,
 				"no resolver defined to resolve %V", host);
-			ngx_gateway_finalize_session(s);
+			ngx_gateway_close_request(r);
 			return;
 		}
 
 		ctx->name = *host;
 		ctx->type = NGX_RESOLVE_A;
 		ctx->handler = ngx_gateway_upstream_resolve_handler;
-		ctx->date = s;
+		ctx->data = r;
 		ctx->timeout = cscf->resolver_timeout;
 
 		u->resolved->ctx = ctx;
 
 		if (ngx_resolve_name(ctx) != NGX_OK) {
 			u->resolved->ctx = NULL;
-			ngx_gateway_finalize_session(s);
+			ngx_gateway_close_request(r);
 			return;
 		}
 
@@ -212,23 +212,23 @@ ngx_gateway_upstream_init(ngx_gateway_session_t *s)
 	}
 
 found:
-	if (uscf->peer.init(s, uscf) != NGX_OK) {
-		ngx_gateway_finalize_session(s);
+	if (uscf->peer.init(r, uscf) != NGX_OK) {
+		ngx_gateway_close_request(r);
 		return;
 	}
 
-	ngx_gateway_upstream_connect(s, u);
+	ngx_gateway_upstream_connect(r, u);
 }
 
 static void 
-ngx_gateway_upstream_connect(ngx_gateway_session_t *s, ngx_gateway_upstream_t *u)
+ngx_gateway_upstream_connect(ngngx_gateway_request_t *r, ngx_gateway_upstream_t *u)
 {
 	int 							tcp_nodely;
 	ngx_int_t 						rc;
 	ngx_connection_t 				*c;
 	ngx_gateway_core_srv_conf_t 	*cscf;
 
-	s->connection->log->action = "connecting to upstream";
+	r->connection->log->action = "connecting to upstream";
 
 	cscf = ngx_gateway_get_module_srv_conf(s, ngx_gateway_core_module);
 
@@ -239,10 +239,10 @@ ngx_gateway_upstream_connect(ngx_gateway_session_t *s, ngx_gateway_upstream_t *u
 
 	if (NGX_OK != rc && NGX_AGAIN != rc) {
 
-		ngx_log_error(NGX_LOG_ERR, s->connection->log, 0,
+		ngx_log_error(NGX_LOG_ERR, r->connection->log, 0,
 					"upstream servers are busy or encounter error!");
 
-		ngx_gateway_upstream_finalize_session(s, u, 0);
+		ngx_gateway_upstream_finalize_session(r, u, 0);
 
 		return;
 	}
@@ -253,9 +253,9 @@ ngx_gateway_upstream_connect(ngx_gateway_session_t *s, ngx_gateway_upstream_t *u
 
 	c = u->peer.connection;
 
-	c->data = s;
-	c->pool = s->connection->pool;
-	c->log = s->connection->log;
+	c->data = r;
+	c->pool = r->pool;
+	c->log = r->log;
 	c->read->log = c->log;
 	c->write->log = c->log;
 
@@ -292,28 +292,28 @@ static void
 ngx_gateway_upstream_handler(ngx_event_t *ev)
 {
 	ngx_connection_t 		*c;
-	ngx_gateway_session_t 	*s;
+	ngx_gateway_request_t 	*r;
 	ngx_gateway_upstream_t 	*u;
 
 	c = ev->data;
-	s = c->data;
+	r = c->data;
 
-	u = s->upstream;
-	c = s->connection;
+	u = r->upstream;
+	c = r->connection;
 
 	if (ev->write) {
 		if (u->write_event_handler) {
-			u->write_event_handler(s, u);
+			u->write_event_handler(r, u);
 		}
 	} else {
 		if (u->read_event_handler) {
-			u->read_event_handler(s, u);
+			u->read_event_handler(r, u);
 		}
 	}
 }
 
 ngx_int_t 
-ngx_gateway_upstream_check_broken_connection(ngx_gateway_session_t *s)
+ngx_gateway_upstream_check_broken_connection(ngx_gateway_request_t *r)
 {
 	int 								n;
 	char								buf[1];
@@ -321,7 +321,7 @@ ngx_gateway_upstream_check_broken_connection(ngx_gateway_session_t *s)
 	ngx_connection_t					*c;
 	ngx_gateway_upstream_t 				*u;
 
-	u = s->upstream;
+	u = r->upstream;
 	c = u->peer.connection;
 
 	if (NULL == u->peer.connection) {
@@ -348,9 +348,9 @@ ngx_gateway_upstream_check_broken_connection(ngx_gateway_session_t *s)
 }
 
 void 
-ngx_gateway_upstream_next(ngx_gateway_session_t *s, ngx_gateway_upstream_t *u, ngx_uint_t ft_type) 
+ngx_gateway_upstream_next(ngx_gateway_request_t *r, ngx_gateway_upstream_t *u, ngx_uint_t ft_type) 
 {
-	ngx_log_debug1(NGX_LOG_DEBUG_GATEWAY, s->connection->log, 0, 
+	ngx_log_debug1(NGX_LOG_DEBUG_GATEWAY, r->connection->log, 0, 
 				"gateway next upstream, fail type: %xi", ft_type);
 
 	if (ft_type != NGX_GATEWAY_UPSTREAM_FT_NOLIVE) {
@@ -362,19 +362,19 @@ ngx_gateway_upstream_next(ngx_gateway_session_t *s, ngx_gateway_upstream_t *u, n
 						"upstream timed out");
 	}
 
-	if (s->connection->error) {
-		ngx_gateway_upstream_finalize_session(s, u, 0);
+	if (r->connection->error) {
+		ngx_gateway_upstream_finalize_session(r, u, 0);
 
 		return;
 	}
 
 	if (u->peer.tries == 0) {
-		ngx_gateway_upstream_finalize_session(s, u, 0);
+		ngx_gateway_upstream_finalize_session(r, u, 0);
 		return;
 	}
 
 	if (u->peer.connection) {
-		ngx_log_debug1(NGX_LOG_DEBUG_GATEWAY, s->connection->log, 0
+		ngx_log_debug1(NGX_LOG_DEBUG_GATEWAY, r->connection->log, 0
 					"close gateway upstream connecton: %d", u->peer.connecton->fd);
 
 		if (u->peer.check_index != NGX_INVALID_CHECK_INDEX) {
@@ -385,35 +385,35 @@ ngx_gateway_upstream_next(ngx_gateway_session_t *s, ngx_gateway_upstream_t *u, n
 		ngx_close_connection(u->peer.connecton);
 	}
 
-	ngx_gateway_upstream_connect(s, u);
+	ngx_gateway_upstream_connect(r, u);
 }
 
 static void 
 ngx_gateway_upstream_cleanup(void *data)
 {
-	ngx_gateway_session_t			*s = data;
+	ngx_gateway_request_t			*r = data;
 
 	ngx_gateway_upstream_t 			*u;
 
 	ngx_log_debug1(NGX_LOG_DEBUG_GATEWAY, s->connection->log, 0,
 			"cleanup gateway upstream session: fd: %d", s->connection->fd);
 
-	u = s->upstream;
+	u = r->upstream;
 
 	if (u->resolved && u->resolved->ctx) {
 		ngx_resolve_name_done(u->resolved->ctx);
 	}
 
-	ngx_gateway_upstream_finalize_session(s, u, NGX_DONE);
+	ngx_gateway_upstream_finalize_session(r, u, NGX_DONE);
 }
 
 static void 
-ngx_gateway_upstream_finalize_session(ngx_gateway_session_t *s, ngx_gateway_upstream_t *u, ngx_uint_t rc)
+ngx_gateway_upstream_finalize_session(ngx_gateway_request_t *r, ngx_gateway_upstream_t *u, ngx_uint_t rc)
 {
 	ngx_time_t		*tp;
 
-	ngx_log_debug1(NGX_LOG_DEBUG_GATEWAY, s->connection->log, 0,
-				"finalize gateway upstream session: %i", rc);
+	ngx_log_debug1(NGX_LOG_DEBUG_GATEWAY, r->connection->log, 0,
+				"finalize gateway upstream request: %i", rc);
 
 	if (u->cleanup) {
 		*u->cleanup = NULL;
@@ -448,9 +448,9 @@ ngx_gateway_upstream_finalize_session(ngx_gateway_session_t *s, ngx_gateway_upst
 		return;
 	}
 
-	s->connection->log->action = "sending to client";
+	r->connection->log->action = "sending to client";
 
-	ngx_tcp_finalize_session(s);
+	ngx_gateway_close_request(r);
 }
 
 ngx_gateway_upstream_srv_conf_t *

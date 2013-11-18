@@ -49,9 +49,9 @@ typedef struct {
 } ngx_gateway_upstream_rr_peer_data_t;
 
 ngx_int_t ngx_gateway_upstream_init_round_robin(ngx_conf_t *cf, ngx_gateway_upstream_srv_conf_t *us);
-ngx_int_t ngx_gateway_upstream_init_round_robin_peer(ngx_gateway_session_t *s,
+ngx_int_t ngx_gateway_upstream_init_round_robin_peer(ngx_gateway_request_t *r,
 			ngx_gateway_upstream_srv_conf_t *us);
-ngx_int_t ngx_gateway_upstream_create_round_robin_peer(ngx_gateway_session_t *s,
+ngx_int_t ngx_gateway_upstream_create_round_robin_peer(ngx_gateway_request_t *r,
 			ngx_gateway_upstream_resolved_t *ur);
 ngx_int_t ngx_gateway_upstream_get_round_robin_peer(ngx_peer_conenction_t *pc, 
 			void *data);

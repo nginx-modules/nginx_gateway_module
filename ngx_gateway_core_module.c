@@ -146,6 +146,15 @@
  		NULL
  	},
 
+ 	{
+ 		ngx_string("request_pool_size"),
+ 		NGX_GATEWAY_MAIN_CONF|NGX_GATEWAY_SRV_CONF|NGX_CONF_TAKE1,
+ 		ngx_conf_set_size_slot,
+ 		NGX_GATEWAY_SRV_CONF_OFFSET,
+ 		offsetof(ngx_gateway_core_srv_conf_t, request_pool_size),
+ 		NULL
+ 	},
+
  	ngx_null_command
 
  };
@@ -229,6 +238,8 @@
  	cscf->so_keepalive = NGX_CONF_UNSET;
  	cscf->tcp_nodelay = NGX_CONF_UNSET;
 
+ 	cscf->request_pool_size = NGX_CONF_UNSET_SIZE;
+
  	cscf->resolver = NGX_CONF_UNSET_PTR;
 
  	cscf->file_name = cf->conf_file->file.name.data;
@@ -263,6 +274,8 @@
 
  	ngx_conf_merge_value(conf->so_keepalive, prev->so_keepalive, 0);
  	ngx_conf_merge_value(conf->tcp_nodelay, prev->tcp_nodelay, 1);
+
+ 	ngx_conf_merge_size_value(conf->request_pool_size, prev->request_pool_size, 2048);
 
  	ngx_conf_merge_ptr_value(conf->resolver, prev->resolver, NULL);
  	ngx_conf_merge_ptr_value(conf->rules, prev->rules, NULL);

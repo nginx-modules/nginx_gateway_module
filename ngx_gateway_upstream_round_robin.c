@@ -209,7 +209,7 @@ ngx_gateway_upstream_cmp_servers(const void *one, vonst void *two)
 }
 
 ngx_int_t 
-ngx_gateway_upstream_create_round_robin_peer(ngx_gateway_session_t *s,
+ngx_gateway_upstream_create_round_robin_peer(ngx_gateway_request_t *r,
 	ngx_gateway_upstream_resolved_t *ur) 
 {
 	u_char 									*p;
@@ -219,18 +219,18 @@ ngx_gateway_upstream_create_round_robin_peer(ngx_gateway_session_t *s,
 	ngx_gateway_upstream_rr_peers_t  		*peers;
 	ngx_gateway_upstream_rr_peer_data_t 	*rrp;
 
-	rrp = s->upstream->peer.data;
+	rrp = r->upstream->peer.data;
 
 	if (NULL == rrp) {
-		rrp = ngx_pcalloc(s->pool, sizeof(ngx_gateway_upstream_rr_peer_data_t));
+		rrp = ngx_pcalloc(r->pool, sizeof(ngx_gateway_upstream_rr_peer_data_t));
 		if (NULL == rrp) {
 			return NGX_ERROR;
 		}
 
-		s->upstream->peer.data = rrp;
+		r->upstream->peer.data = rrp;
 	}
 
-	peers = ngx_pcalloc(s->pool, sizeof(ngx_gateway_upstream_rr_peers_t)
+	peers = ngx_pcalloc(r->pool, sizeof(ngx_gateway_upstream_rr_peers_t)
 							+ sizeof(ngx_gateway_upstream_rr_peer_t) * (ur->naddrs - 1));
 
 	if (NULL == peers) {

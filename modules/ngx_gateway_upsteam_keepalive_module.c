@@ -38,7 +38,7 @@ typedef struct {
 	u_char											sockaddr[NGX_SOCKADDRLEN];
 } ngx_gateway_upstream_keepalive_cache_t;
 
-static ngx_int_t ngx_gateway_upstream_init_keepalive_peer(ngx_gateway_session_t *s, 
+static ngx_int_t ngx_gateway_upstream_init_keepalive_peer(ngx_gateway_request_t *t, 
 	ngx_gateway_upstream_srv_conf_t *us);
 static ngx_int_t ngx_gateway_upstream_get_keepalive_peer(ngx_peer_connection_t *pc,
 	void *data);
@@ -133,7 +133,7 @@ ngx_gateway_upstream_init_keepalive(ngx_conf_t *cf,
 }
 
 static ngx_int_t 
-ngx_gateway_upstream_init_keepalive_peer(ngx_gateway_session_t *s,
+ngx_gateway_upstream_init_keepalive_peer(ngx_gateway_request_t *r,
 	ngx_gateway_upstream_srv_conf_t *us)
 {
 	ngx_gateway_upstream_keepalive_peer_data_t				*kp;
@@ -155,14 +155,14 @@ ngx_gateway_upstream_init_keepalive_peer(ngx_gateway_session_t *s,
 
 	kp->conf = kcf;
 
-	kp->upstream = s->upstream;
-	kp->data = s->upstream->peer.data;
-	kp->origianl_get_peer = s->upstream->peer.get;
-	kp->origianl_free_peer = s->upstream->peer.free;
+	kp->upstream = r->upstream;
+	kp->data = r->upstream->peer.data;
+	kp->origianl_get_peer = r->upstream->peer.get;
+	kp->origianl_free_peer = r->upstream->peer.free;
 
-	s->upstream->peer.data = kp;
-	s->upstream->peer.get = ngx_gateway_upstream_get_keepalive_peer;
-	s->upstream->peer.free = ngx_gateway_upstream_free_keepalive_peer;
+	r->upstream->peer.data = kp;
+	r->upstream->peer.get = ngx_gateway_upstream_get_keepalive_peer;
+	r->upstream->peer.free = ngx_gateway_upstream_free_keepalive_peer;
 
 	return NGX_OK;
 }
